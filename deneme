@@ -1,0 +1,105 @@
+// verileri kullanıcıdan alıp hem mongodbye kaydediyoruz, hem de json mesajı olarak dönüyoruz.
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+type Person struct {
+	FirstName string `json:"ad" bson:"ad"`
+	LastName  string `json:"soyad" bson:"soyad"`
+	Address   string `json:"adres" bson:"adres"`
+}
+
+type Message struct {
+	Text string `json:"message"`
+}
+
+func main() {
+	http.HandleFunc("/save", saveHandler)
+	http.ListenAndServe(":8080", nil)
+}
+
+func saveHandler(w http.ResponseWriter, r *http.Request) {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Print("Kaç kişi gireceksiniz: ")
+	countStr, _ := reader.ReadString('\n')
+	countStr = strings.TrimSpace(countStr)
+	count := 0
+	fmt.Sscanf(countStr, "%d", &count)
+
+	var persons []Person
+	var messages []Message
+
+	for i := 0; i < count; i++ {
+		fmt.Printf("\nKişi #%d\n", i+1)
+
+		fmt.Print("Ad: ")
+		firstName, _ := reader.ReadString('\n')
+		firstName = strings.TrimSpace(firstName)
+
+		fmt.Print("Soyad: ")
+		lastName, _ := reader.ReadString('\n')
+		lastName = strings.TrimSpace(lastName)
+
+		fmt.Print("Adres: ")
+		address, _ := reader.ReadString('\n')
+		address = strings.TrimSpace(address)
+
+		person := Person{
+			FirstName: firstName,
+			LastName:  lastName,
+			Address:   address,
+		}
+
+		persons = append(persons, person)
+		messages = append(messages, Message{
+			Text: fmt.Sprintf("Ad: %s, Soyad: %s, Adres: %s", person.FirstName, person.LastName, person.Address),
+		})
+	}
+
+	clientOptions := options.Client().ApplyURI("mongodb+srv://betulkarakas:135792468@cluster0.akd62th.mongodb.net/")
+	client, err := mongo.Connect(context.Background(), clientOptions)
+	if err != nil {
+		http.Error(w, "Veritabanı bağlantı hatası", http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if err = client.Disconnect(context.Background()); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	databaseName := "sanlabgunlukleri"
+	collectionName := "ornek"
+	collection := client.Database(databaseName).Collection(collectionName)
+
+	for _, person := range persons {
+		_, err = collection.InsertOne(context.Background(), person)
+		if err != nil {
+			http.Error(w, "Veri ekleme hatası", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	jsonResponse, err := json.Marshal(messages)
+	if err != nil {
+		http.Error(w, "JSON dönüşüm hatası", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonResponse)
+}
